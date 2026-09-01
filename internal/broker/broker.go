@@ -4,33 +4,46 @@ import "sync"
 
 type Broker struct {
 	mu     sync.Mutex
-	topics map[string][]string
+	topics map[string]chan string
 }
 
 func NewBroker() *Broker {
 	return &Broker{
-		topics: make(map[string][]string),
+		topics: make(map[string]chan string),
 	}
 }
 
-func (b *Broker) Publish(topic, message string) {
+func (b *Broker) getOrCreateTopic(topic string) chan string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.topics[topic] = append(b.topics[topic], message)
+
+	ch, exists := b.topics[topic]
+	if !exists {
+		ch = make(chan string, 100)
+		b.topics[topic] = ch
+	}
+	return ch
+}
+
+func (b *Broker) Publish(topic, message string) bool {
+	ch := b.getOrCreateTopic(topic)
+	select {
+	case ch <- message:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *Broker) Consume(topic string) (string, bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	ch := b.getOrCreateTopic(topic)
 
-	messages := b.topics[topic]
-	if len(messages) == 0 {
+	select {
+	case msg := <-ch:
+		return msg, true
+	default:
 		return "", false
 	}
-
-	msg := messages[0]
-	b.topics[topic] = messages[1:]
-	return msg, true
 }
 
 func (b *Broker) Count(topic string) int {
